@@ -15,7 +15,7 @@ namespace BlazorAppWithNils.Code
             byte[] hashedValue = mD5.ComputeHash(inputByte);
             return Convert.ToBase64String(hashedValue);
         }
-        public string MD256Hashing(string textToHash)
+        public string SHA256Hashing(string textToHash)
         {
             byte[] inputByte = Encoding.ASCII.GetBytes(textToHash);
             SHA256 sHA256 = SHA256.Create();
