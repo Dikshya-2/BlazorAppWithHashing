@@ -1,0 +1,347 @@
+﻿@page "/"
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Authorization
+@using Microsoft.AspNetCore.Identity
+@using BlazorAppWithNils.Models
+@using Microsoft.EntityFrameworkCore
+@using System.Security.Claims
+@using System.ComponentModel.DataAnnotations
+@inject IServiceProvider _serviceProvider;
+@inject UserManager<Data.ApplicationUser> UserManager
+@inject AuthenticationStateProvider _authenticationStateProvider;
+@inject TodoListContext _context;
+@inject Code.ImplementedHashingHandler _hashingHandler
+@* @inject Code.SymetriskEncrypttionHandler _symetriskEncrypttionHandler
+ *@
+@inject Code.ImplementedAsymetriskEncryptionHandler _asymetriskEncryptionHandler
+@attribute [Authorize(Policy = "AuthenticatedUser")]
+
+
+<PageTitle>Home</PageTitle>
+
+@if (_isAuthenticated)
+{
+    // Show CPR input box only if a Todo item hasn't been added
+    if (!isTodoEntered)
+    {
+        <div class="cpr-container">
+            <h3>Enter Your CPR Number</h3>
+            <input type="text" @bind="userCpr" placeholder="Enter CPR number" maxlength="10" pattern="^\d{10}$" required />
+            <button @onclick="CprHandling">Submit</button>
+
+            @if (!string.IsNullOrEmpty(successMessage))
+            {
+                <p class="success-message">@successMessage</p>
+            }
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <p class="error-message">@errorMessage</p>
+            }
+        </div>
+    }
+}
+
+@if (isCprRegistered && isTodoEntered)
+{
+    <div class="todo-container">
+        <h3>Your Todo List</h3>
+        <input type="text" class="todo-input" @bind="todoItem" placeholder="Enter Todo item" />
+        <button class="todo-submit-button" @onclick="btnSubmitTodoItemClicked">Add Todo</button>
+
+        @if (todoLists?.Any() == true)
+        {
+            <ul class="todo-list">
+                @foreach (var item in todoLists)
+                {
+                    <li>@DecryptTodoItem(item.Item)</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <p>No items in your Todo list.</p>
+        }
+    </div>
+}
+
+
+<style>
+    .cpr-container {
+        width: 80%; 
+        max-width: 400px;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 20px auto;
+        background-color: lightblue;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+        .cpr-container h3 {
+            margin-bottom: 15px;
+            font-size: 1.5em;
+            color: #333;
+        }
+
+    .cpr-input {
+        width: calc(100% - 24px);
+        padding: 12px;
+        margin-bottom: 15px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 1em;
+        transition: border-color 0.3s;
+    }
+
+        .cpr-input:focus {
+            border-color: #4CAF50; /* Green */
+            outline: none;
+        }
+
+    .cpr-submit-button {
+        width: 100%;
+        height: 50px;
+        background-color: orange; 
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        transition: background-color 0.3s;
+    }
+
+        .cpr-submit-button:hover {
+            background-color: darkorange;
+        }
+
+    .success-message {
+        color: green;
+        margin-top: 10px;
+    }
+
+    .error-message {
+        color: red;
+        margin-top: 10px;
+    }
+
+
+  .todo-container {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        margin: 20px 0;
+        background-color: #f9f9f9;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .todo-container h3 {
+        margin-bottom: 15px;
+        font-size: 1.5em;
+        color: #333;
+    }
+
+    .todo-input {
+        width: calc(90% - 24px);
+        padding: 12px;
+        margin-bottom: 15px; /* Space between input and button */
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 1em;
+        transition: border-color 0.3s;
+    }
+
+    .todo-input:focus {
+        border-color: #4CAF50; /* Green */
+        outline: none;
+    }
+
+    .todo-submit-button {
+        width: 100%; /* Full width button */
+        height: 50px;
+        background-color: #4CAF50; /* Green */
+        color: white;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 1em;
+        transition: background-color 0.3s;
+    }
+
+    .todo-submit-button:hover {
+        background-color: #45a049;
+    }
+
+    .todo-list {
+        list-style-type: none;
+        padding: 0;
+    }
+
+    .todo-list li {
+        padding: 8px;
+        border-bottom: 1px solid #ddd;
+    }
+
+    .todo-list li:last-child {
+        border-bottom: none;
+    }
+</style>
+
+@code {
+    public bool _isAuthenticated;
+    private bool isCprRegistered = false;
+    private bool isTodoEntered = false; 
+    private string userCpr;
+    private string todoItem; 
+    private List<TodoList>? todoLists;
+    private string? successMessage;
+    private string? errorMessage;
+    private string? _user;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authenticationState = await _authenticationStateProvider.GetAuthenticationStateAsync();
+        var authUser = authenticationState.User;
+        _isAuthenticated = authUser.Identity.IsAuthenticated;
+        _user = authUser.Identity.Name;
+      
+        if (_isAuthenticated)
+        {
+            await LoadUserCprAndTodos(authUser);
+        }
+    }
+
+    private async Task CprHandling()
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(userCpr) || userCpr.Length != 10 || !userCpr.All(char.IsDigit))
+            {
+                errorMessage = "CPR number must be exactly 10 digits and numeric.";
+                successMessage = null;
+                return;
+            }
+            var currentUser = await UserManager.GetUserAsync((await _authenticationStateProvider.GetAuthenticationStateAsync()).User);
+           
+            string s =  _hashingHandler.BcryptHashing(userCpr);
+            if (currentUser != null)
+            {
+                var currentUserCpr = await _context.Cprs.FirstOrDefaultAsync(c => c.CprNr == userCpr);
+
+                if (currentUserCpr == null)
+                {
+                    var newCpr = new Cpr
+                        {
+                            CprNr = s,
+                            User = _user
+                        };
+                    _context.Cprs.Add(newCpr);
+                    await _context.SaveChangesAsync();
+                    // Set isTodoEntered to true only after successfully registering the CPR
+                    isTodoEntered = true;
+                    successMessage = "CPR number registered successfully! Now you can add Todo items.";
+                }
+                else
+                {
+                    successMessage = "CPR number matches! You can now proceed to add Todo items.";
+                    isTodoEntered = true; // Set to true if CPR matches
+                }
+                errorMessage = null;
+            }
+            else
+            {
+                errorMessage = "User is not authenticated.";
+                successMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+        }
+    }
+
+
+    private async Task btnSubmitTodoItemClicked()
+    {
+        if (!isCprRegistered)
+        {
+            errorMessage = "You must register a CPR number before adding Todo items.";
+            return;
+        }
+
+        // Retrieve the current authentication state
+        var authenticationState = await _authenticationStateProvider.GetAuthenticationStateAsync();
+        var authUser = authenticationState.User;
+
+        // Find the currently authenticated user
+        var currentUser = await UserManager.GetUserAsync(authUser);
+
+        if (currentUser == null)
+        {
+            errorMessage = "User is not authenticated.";
+            return;
+        }
+        string encryptedTodoItem = _asymetriskEncryptionHandler.EncryptAsymetrisk(todoItem);
+
+        // Retrieve the CPR associated with the user
+        var userCpr = await _context.Cprs.FirstOrDefaultAsync(c => c.User == currentUser.UserName);
+        if (userCpr == null)
+        {
+            errorMessage = "No CPR record found for the current user.";
+            return;
+        }
+
+        // Add the new Todo item
+        var newTodo = new TodoList
+            {
+                UserId = userCpr.Cprid,
+                Item = encryptedTodoItem
+            };
+
+        _context.TodoLists.Add(newTodo);
+        await _context.SaveChangesAsync();
+
+        // Clear the Todo item input and update the success message
+        todoItem = string.Empty;
+        successMessage = "Todo item added successfully!";
+        errorMessage = null;
+
+        // Set isTodoEntered to true to hide CPR box
+        isTodoEntered = true;
+
+        // Reload the user's CPR and Todo list
+        await LoadUserCprAndTodos(authUser);
+    }
+    // Decrypt a todo item for display
+    private string DecryptTodoItem(string encryptedItem)
+    {
+        try
+        {
+            // Decrypt the Todo item
+            return _asymetriskEncryptionHandler.DecryptAsymetrisk(encryptedItem);
+        }
+        catch
+        {
+            return "Decryption failed";
+        }
+    }
+
+
+    private async Task LoadUserCprAndTodos(ClaimsPrincipal authUser)
+    {
+        var currentUser = await UserManager.GetUserAsync(authUser);
+        var registeredCpr = await _context.Cprs.FirstOrDefaultAsync(c => c.User == currentUser.UserName);
+        isCprRegistered = registeredCpr != null;
+
+        if (isCprRegistered)
+        {
+            todoLists = await _context.TodoLists.Where(t => t.UserId == registeredCpr.Cprid).ToListAsync();
+        }
+        else
+        {
+            todoLists = new List<TodoList>();
+        }
+    }
+}
+
